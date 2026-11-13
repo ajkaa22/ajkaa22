@@ -1,0 +1,12 @@
+name = "rnv-departures"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+[vars]
+# Fill from the RNV mail / Data Hub docs:
+OAUTH_URL = "https://rnvopendataportal.b2clogin.com/rnvopendataportal.onmicrosoft.com/b2c_1_sign_in/oauth2/v2.0/token"
+API_URL = "https://graphql-sandbox-dds.rnv-online.de/"
+RNV_RESOURCE_ID = "REPLACE_ME"
+# Station IDs for Hirschberg-Leutershausen and Schriesheim: look up in the API (station search) or RNV GTFS stops
+STATION_IDS = '{"Hirschberg-Leutershausen":"REPLACE_ME","Schriesheim":"REPLACE_ME"}'
+# Secrets (do NOT put here):  wrangler secret put RNV_CLIENT_ID ; wrangler secret put RNV_CLIENT_SECRET

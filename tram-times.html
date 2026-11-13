@@ -32,7 +32,7 @@
 <select id="st"></select>
 <div id="out"></div>
 
-<p class="note">Zeiten basieren auf dem Fahrplan-Block im Dateiquelltext (<code>TIMETABLE</code>) – bitte einmal mit RNV/OEG-Fahrplan abgleichen. Keine Echtzeitdaten / Verspätungen.</p>
+<p class="note">Zeiten basieren auf dem Fahrplan-Block im Dateiquelltext (<code>TIMETABLE</code>) – bitte einmal mit RNV/OEG-Fahrplan abgleichen. Live-Daten (inkl. Verspätung) nur, wenn PROXY_URL gesetzt ist; Quelle: RNV Open Data Hub (dl-de/by-2-0).</p>
 
 <script>
 /* ============ FAHRPLAN – hier anpassen ============
@@ -54,6 +54,10 @@ const TIMETABLE = {
   }
 };
 const WINDOW_MIN = 30;
+/* Live-Daten: URL des Proxys (rnv-proxy/) eintragen. Leer = nur Fahrplan. */
+const PROXY_URL = "";
+/* Welche Zielorte gehören zu welcher Richtung (Teilstring, klein geschrieben) */
+const DEST_MATCH = {"→ Heidelberg":["heidelberg"], "→ Weinheim":["weinheim"], "→ Hirschberg / Weinheim":["weinheim","hirschberg"]};
 /* =================================================== */
 
 const tz = "Europe/Berlin";
@@ -66,6 +70,32 @@ function berlinNow(){
 }
 const pad = n => String(n).padStart(2,"0");
 
+let live = null; // {station, at, deps}
+async function loadLive(){
+  if(!PROXY_URL) return;
+  const st = sel.value;
+  try{
+    const ctl = new AbortController(); setTimeout(()=>ctl.abort(),6000);
+    const r = await fetch(`${PROXY_URL}/departures?station=${encodeURIComponent(st)}`,{signal:ctl.signal});
+    const j = await r.json(); if(!j.departures) throw 0;
+    live = {station:st, at:Date.now(), deps:j.departures};
+  }catch(e){ live = null; }
+  render();
+}
+function liveFor(name, now){
+  if(!live || live.station!==sel.value || Date.now()-live.at>120000) return null;
+  const keys = DEST_MATCH[name]||[];
+  const base = new Date(); const nowMs = Date.now(); const res=[];
+  for(const d of live.deps){
+    if(!keys.some(k=>(d.destination||"").toLowerCase().includes(k))) continue;
+    const real = new Date(d.realtime||d.planned), plan = new Date(d.planned||d.realtime);
+    const diff = (real-nowMs)/60000;
+    if(diff<0||diff>WINDOW_MIN) continue;
+    const hm = x=>new Intl.DateTimeFormat("de-DE",{timeZone:tz,hour:"2-digit",minute:"2-digit"}).format(x);
+    res.push({label:hm(real), diff, delay:Math.round((real-plan)/60000), ms:+real});
+  }
+  return res.sort((a,b)=>a.ms-b.ms);
+}
 function departures(dir, now){
   const set = (now.wd==="Sat"||now.wd==="Sun") ? dir.we : dir.wd;
   const nowMin = now.h*60 + now.m + now.s/60;
@@ -91,18 +121,19 @@ function render(){
   try{localStorage.setItem("st",sel.value)}catch(e){}
   const out = document.getElementById("out"); out.innerHTML="";
   for (const [name,dir] of Object.entries(TIMETABLE[sel.value])){
-    const d = departures(dir, now);
+    const lv = liveFor(name, now);
+    const d = lv ? lv.map(x=>({t:0,diff:x.diff,label:x.label,delay:x.delay})) : departures(dir, now);
     const c = document.createElement("div"); c.className="card";
-    c.innerHTML = `<h2>${name} · nächste ${WINDOW_MIN} min</h2>` +
+    c.innerHTML = `<h2>${name} · nächste ${WINDOW_MIN} min ${lv?"· live":"· Fahrplan"}</h2>` +
       (d.length ? d.map(x=>{const mm=Math.floor(x.diff);
-        return `<div class="row"><span class="t">${pad(Math.floor(x.t/60)%24)}:${pad(x.t%60)}</span>
+        return `<div class="row"><span class="t">${x.label||pad(Math.floor(x.t/60)%24)+":"+pad(x.t%60)}${x.delay>0?` <small style="color:#d33">+${x.delay}</small>`:""}</span>
         <span class="m">${mm<=0?"jetzt":"in "+mm+" min"}</span></div>`}).join("")
         : `<div class="none">Keine Abfahrt in den nächsten ${WINDOW_MIN} Minuten.</div>`);
     out.appendChild(c);
   }
 }
-sel.addEventListener("change",render);
-render(); setInterval(render,15000);
+sel.addEventListener("change",()=>{live=null;render();loadLive();});
+render(); loadLive(); setInterval(render,15000); setInterval(loadLive,60000);
 </script>
 </body>
 </html>
