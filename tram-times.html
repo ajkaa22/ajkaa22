@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Bahn-Abfahrt</title>
+<style>
+  :root{--bg:#f4f5f7;--card:#fff;--fg:#111;--mute:#6b7280;--acc:#0a7d3b;--line:#e5e7eb}
+  @media (prefers-color-scheme:dark){:root{--bg:#0e0f11;--card:#1b1d21;--fg:#f2f3f5;--mute:#9aa0aa;--acc:#3ddc84;--line:#2c2f35}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:17px -apple-system,system-ui,sans-serif;padding:16px;padding-top:max(16px,env(safe-area-inset-top))}
+  h1{font-size:22px;margin:4px 0 2px}
+  .now{color:var(--mute);margin-bottom:14px}
+  label{display:block;font-size:13px;color:var(--mute);margin-bottom:6px}
+  select{width:100%;font-size:18px;padding:12px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--fg)}
+  .card{background:var(--card);border-radius:14px;padding:14px;margin-top:14px;border:1px solid var(--line)}
+  .card h2{font-size:15px;margin:0 0 8px;color:var(--mute);font-weight:600}
+  .row{display:flex;justify-content:space-between;align-items:baseline;padding:10px 0;border-top:1px solid var(--line)}
+  .row:first-of-type{border-top:0}
+  .t{font-size:28px;font-weight:700;font-variant-numeric:tabular-nums}
+  .m{color:var(--acc);font-weight:600}
+  .none{color:var(--mute);padding:8px 0}
+  .note{font-size:12px;color:var(--mute);margin-top:18px;line-height:1.4}
+</style>
+</head>
+<body>
+<h1>🚋 Bahn-Abfahrt</h1>
+<div class="now" id="now"></div>
+
+<label for="st">Station</label>
+<select id="st"></select>
+<div id="out"></div>
+
+<p class="note">Zeiten basieren auf dem Fahrplan-Block im Dateiquelltext (<code>TIMETABLE</code>) – bitte einmal mit RNV/OEG-Fahrplan abgleichen. Keine Echtzeitdaten / Verspätungen.</p>
+
+<script>
+/* ============ FAHRPLAN – hier anpassen ============
+   Pro Station und Richtung: Minuten nach der vollen Stunde, getrennt nach
+   Zeitfenster. "from"/"to" = Stunde (inkl./exkl.). Wochentag-Gruppen: wd = Mo-Fr, we = Sa/So.
+   ACHTUNG: Beispielwerte (ca. alle 20 min) – mit echtem Fahrplan ersetzen! */
+const EVERY20 = [7, 27, 47];
+const EVERY20_B = [3, 23, 43];
+function plan(minA){ return {wd:[{from:5,to:24,min:minA}], we:[{from:6,to:24,min:minA}]}; }
+
+const TIMETABLE = {
+  "Hirschberg-Leutershausen": {
+    "→ Heidelberg":                 plan(EVERY20),
+    "→ Weinheim":                   plan(EVERY20_B)
+  },
+  "Schriesheim": {
+    "→ Heidelberg":                 plan([15, 35, 55]),
+    "→ Hirschberg / Weinheim":      plan([ 1, 21, 41])
+  }
+};
+const WINDOW_MIN = 30;
+/* =================================================== */
+
+const tz = "Europe/Berlin";
+function berlinNow(){
+  const p = new Intl.DateTimeFormat("en-GB",{timeZone:tz,year:"numeric",month:"2-digit",day:"2-digit",
+    hour:"2-digit",minute:"2-digit",second:"2-digit",weekday:"short",hour12:false}).formatToParts(new Date());
+  const g = t => p.find(x=>x.type===t).value;
+  return {h:+g("hour")%24, m:+g("minute"), s:+g("second"), wd:g("weekday"),
+          date:`${g("day")}.${g("month")}.${g("year")}`};
+}
+const pad = n => String(n).padStart(2,"0");
+
+function departures(dir, now){
+  const set = (now.wd==="Sat"||now.wd==="Sun") ? dir.we : dir.wd;
+  const nowMin = now.h*60 + now.m + now.s/60;
+  const res = [];
+  for (let h=now.h; h<=now.h+1; h++){
+    for (const w of set){
+      if (h>=w.from && h<w.to) for (const m of w.min){
+        const t = h*60+m, diff = t-nowMin;
+        if (diff>=0 && diff<=WINDOW_MIN) res.push({t, diff});
+      }
+    }
+  }
+  return res.sort((a,b)=>a.t-b.t);
+}
+
+const sel = document.getElementById("st");
+Object.keys(TIMETABLE).forEach(n=>{const o=document.createElement("option");o.textContent=n;sel.appendChild(o);});
+try{ const s=localStorage.getItem("st"); if(s&&TIMETABLE[s]) sel.value=s; }catch(e){}
+
+function render(){
+  const now = berlinNow();
+  document.getElementById("now").textContent = `${now.wd} ${now.date} · ${pad(now.h)}:${pad(now.m)} Uhr`;
+  try{localStorage.setItem("st",sel.value)}catch(e){}
+  const out = document.getElementById("out"); out.innerHTML="";
+  for (const [name,dir] of Object.entries(TIMETABLE[sel.value])){
+    const d = departures(dir, now);
+    const c = document.createElement("div"); c.className="card";
+    c.innerHTML = `<h2>${name} · nächste ${WINDOW_MIN} min</h2>` +
+      (d.length ? d.map(x=>{const mm=Math.floor(x.diff);
+        return `<div class="row"><span class="t">${pad(Math.floor(x.t/60)%24)}:${pad(x.t%60)}</span>
+        <span class="m">${mm<=0?"jetzt":"in "+mm+" min"}</span></div>`}).join("")
+        : `<div class="none">Keine Abfahrt in den nächsten ${WINDOW_MIN} Minuten.</div>`);
+    out.appendChild(c);
+  }
+}
+sel.addEventListener("change",render);
+render(); setInterval(render,15000);
+</script>
+</body>
+</html>
